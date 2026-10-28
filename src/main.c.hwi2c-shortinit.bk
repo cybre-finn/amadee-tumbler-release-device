@@ -1,0 +1,128 @@
+#include <stdio.h>
+#include "pico/stdlib.h"
+
+#include "hardware/i2c.h"
+
+#define I2C_PORT i2c0
+#define SDA_PIN 16  // physical pin 21
+#define SCL_PIN 17  // physical pin 22
+#define I2C_BAUD 100000
+#define I2C_TIMEOUT_US 10000
+
+#define VL53_ADDR 0x29
+
+// Graph scaling: one '#' per GRAPH_MM_PER_CHAR millimeters
+#define GRAPH_MM_PER_CHAR 20
+#define GRAPH_MAX_CHARS 60
+
+static void i2c_init_pins(void) {
+    i2c_init(I2C_PORT, I2C_BAUD);
+    gpio_set_function(SDA_PIN, GPIO_FUNC_I2C);
+    gpio_set_function(SCL_PIN, GPIO_FUNC_I2C);
+    gpio_pull_up(SDA_PIN);
+    gpio_pull_up(SCL_PIN);
+}
+
+static bool reg_write(uint8_t reg, uint8_t val) {
+    uint8_t buf[2] = {reg, val};
+    return i2c_write_timeout_us(I2C_PORT, VL53_ADDR, buf, 2, false, I2C_TIMEOUT_US) == 2;
+}
+
+static bool reg_read(uint8_t reg, uint8_t *buf, int len) {
+    if (i2c_write_timeout_us(I2C_PORT, VL53_ADDR, &reg, 1, true, I2C_TIMEOUT_US) != 1) return false;
+    return i2c_read_timeout_us(I2C_PORT, VL53_ADDR, buf, len, false, I2C_TIMEOUT_US) == len;
+}
+
+static uint8_t reg_read8(uint8_t reg) {
+    uint8_t v = 0;
+    reg_read(reg, &v, 1);
+    return v;
+}
+
+static uint8_t stop_variable;
+
+static bool vl53_init(void) {
+    uint8_t id = 0;
+    if (!reg_read(0xC0, &id, 1)) return false;
+    printf("Model ID: 0x%02X (expected 0xEE)\n", id);
+
+    reg_write(0x89, reg_read8(0x89) | 0x01); // 2V8 I/O mode
+    reg_write(0x88, 0x00);                   // I2C standard mode
+
+    reg_write(0x80, 0x01);
+    reg_write(0xFF, 0x01);
+    reg_write(0x00, 0x00);
+    stop_variable = reg_read8(0x91);
+    reg_write(0x00, 0x01);
+    reg_write(0xFF, 0x00);
+    reg_write(0x80, 0x00);
+    return true;
+}
+
+// Single-shot measurement. Returns distance in mm, or -1 on error/timeout.
+static int vl53_read_mm(void) {
+    reg_write(0x80, 0x01);
+    reg_write(0xFF, 0x01);
+    reg_write(0x00, 0x00);
+    reg_write(0x91, stop_variable);
+    reg_write(0x00, 0x01);
+    reg_write(0xFF, 0x00);
+    reg_write(0x80, 0x00);
+
+    reg_write(0x00, 0x01); // start single-shot ranging
+
+    uint64_t t0 = time_us_64();
+    while (reg_read8(0x00) & 0x01) {
+        if (time_us_64() - t0 > 100000) return -1;
+    }
+    t0 = time_us_64();
+    while ((reg_read8(0x13) & 0x07) == 0) {
+        if (time_us_64() - t0 > 100000) return -1;
+    }
+
+    uint8_t buf[2];
+    if (!reg_read(0x1E, buf, 2)) return -1;
+    reg_write(0x0B, 0x01); // clear interrupt
+    return (buf[0] << 8) | buf[1];
+}
+
+static void scan_bus(void) {
+    printf("No VL53L0X on SDA=GPIO%d SCL=GPIO%d. ACKs:", SDA_PIN, SCL_PIN);
+    for (int a = 1; a < 127; a++) {
+        uint8_t dummy;
+        if (i2c_read_timeout_us(I2C_PORT, a, &dummy, 1, false, I2C_TIMEOUT_US) >= 0) printf(" 0x%02X", a);
+    }
+    printf("\n");
+}
+
+int main() {
+    stdio_init_all();
+    i2c_init_pins();
+
+    // Wait for a serial terminal so no output is lost
+    while (!stdio_usb_connected()) sleep_ms(100);
+    sleep_ms(500);
+
+    printf("VL53L0X live distance test\n");
+
+    while (!vl53_init()) {
+        scan_bus();
+        sleep_ms(500);
+    }
+
+    while (true) {
+        int mm = vl53_read_mm();
+        if (mm < 0) {
+            printf("timeout\n");
+        } else if (mm >= 8190) {
+            printf("%5d mm | out of range\n", mm);
+        } else {
+            int n = mm / GRAPH_MM_PER_CHAR;
+            if (n > GRAPH_MAX_CHARS) n = GRAPH_MAX_CHARS;
+            printf("%5d mm |", mm);
+            for (int i = 0; i < n; i++) putchar('#');
+            putchar('\n');
+        }
+        sleep_ms(50);
+    }
+}

@@ -1,0 +1,25 @@
+# CMake / Pico-SDK Build
+build/
+cmake-build-*/
+CMakeUserPresets.json
+
+# Firmware-Binaries ausserhalb von build/
+*.uf2
+*.elf
+*.bin
+*.hex
+*.dis
+*.map
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.cache/
+*.swp
+*~
+.DS_Store
