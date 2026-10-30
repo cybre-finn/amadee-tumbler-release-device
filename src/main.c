@@ -47,6 +47,10 @@ static const unit_pins_t UNIT[NUM_UNITS] = {
 // Upper limit for a dispense run in case the sensor never sees an ejection
 // (e.g. dispenser empty).
 #define DISPENSE_MAX_REVS 10
+// 0: every start (click, long press, trigger) is exactly one revolution, the
+// sensors are only read and displayed. 1: long press/trigger dispense until
+// the sensor sees an ejection.
+#define SENSOR_DISPENSE 0
 
 // Minimum time a level has to be stable before it counts.
 // Buttons bounce mechanically -> 20 ms. The trigger pulse has to be HIGH for
@@ -146,7 +150,7 @@ static void unit_start(int u, motor_runtime_t *r, run_source_t src, uint64_t now
     r->next_toggle_us = now_us;
     run_source[u] = src;
     run_id[u]++;
-    unit_state[u] = (src == SRC_BTN_CLICK) ? UNIT_REV : UNIT_DISPENSE;
+    unit_state[u] = (SENSOR_DISPENSE && src != SRC_BTN_CLICK) ? UNIT_DISPENSE : UNIT_REV;
 }
 
 static void unit_stop(int u, motor_runtime_t *r, run_end_t reason) {
@@ -447,6 +451,13 @@ static bool fall_detector_update(int *below_count, int eff_mm) {
 }
 
 static const char *source_name(run_source_t src) {
+    if (!SENSOR_DISPENSE) {
+        switch (src) {
+        case SRC_BTN_CLICK: return "button click, 1 revolution";
+        case SRC_BTN_LONG:  return "button long press, 1 revolution";
+        default:            return "trigger pulse, 1 revolution";
+        }
+    }
     switch (src) {
     case SRC_BTN_CLICK: return "button click, 1 revolution";
     case SRC_BTN_LONG:  return "button long press, dispense";
@@ -465,8 +476,12 @@ static void print_mapping(void) {
                p->sensor_conn, u, p->xshut_pin, p->vl53_addr);
     }
     printf("STP_EN=GP%d (LOW = drivers enabled), I2C: SDA=GP%d SCL=GP%d\n", STP_EN_PIN, SDA_PIN, SCL_PIN);
-    printf("Button click = 1 revolution, button held %d s or trigger pulse = dispense until ejection\n\n",
-           BTN_LONG_PRESS_US / 1000000);
+    if (SENSOR_DISPENSE)
+        printf("Button click = 1 revolution, button held %d s or trigger pulse = dispense until ejection\n\n",
+               BTN_LONG_PRESS_US / 1000000);
+    else
+        printf("Button click, button held %d s or trigger pulse = 1 revolution (sensor dispense off)\n\n",
+               BTN_LONG_PRESS_US / 1000000);
 }
 
 int main() {
@@ -534,8 +549,7 @@ int main() {
             if (sensor_ok[u] != reported_ok[u]) {
                 reported_ok[u] = sensor_ok[u];
                 if (sensor_ok[u]) printf("U%d: sensor %s OK\n", u + 1, UNIT[u].sensor_conn);
-                else printf("U%d: sensor %s not available, dispense falls back to 1 revolution\n",
-                            u + 1, UNIT[u].sensor_conn);
+                else printf("U%d: sensor %s not available\n", u + 1, UNIT[u].sensor_conn);
             }
 
             uint32_t id = run_id[u];

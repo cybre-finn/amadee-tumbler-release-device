@@ -3887,6 +3887,17 @@
 			(embedded_fonts no)
 		)
 	)
+	(text "Diode direction is wrong here!\n(change in case of another design)\n(reverse during assembly)"
+		(exclude_from_sim no)
+		(at 139.954 46.228 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "0cd93ab9-d434-49a6-89ed-e004b779171f")
+	)
 	(text "terminal resistor against reflections if at end of bus...\nOPTIONAL!!"
 		(exclude_from_sim no)
 		(at 103.378 39.878 0)
